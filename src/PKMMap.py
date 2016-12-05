@@ -4,6 +4,8 @@ from PyQt4.QtCore import Qt
 import time as t
 import math
 import ruchomaKropka
+import wykrywanieRuchuNaFilmiku as Wykrywanie
+import thread
 from PyQt4 import QtCore
 from PyQt4 import QtGui
 import busControl
@@ -13,6 +15,9 @@ import busControl
 # 2 - Wrzeszcz - Banino
 # 1 - Kiełpinek - Wrzeszcz
 # 0 - Wrzeszcz - Kiełpinek
+
+thread.start_new_thread(Wykrywanie.analiza, ())
+time.sleep(2.0)
 
 class Nastawa:
     """
@@ -896,6 +901,28 @@ class Map(QtGui.QWidget):
                     y = (train.y - train.r/2)
                     r = train.r
                 qp.drawEllipse(x, y, r, r)
+
+            if len(Wykrywanie.pred) > 0:
+                qp.setPen(Qt.black)
+                qp.setBrush(Qt.black)
+                #print float(Wykrywanie.pred[-1][0])/1024.0, float(Wykrywanie.pred[-1][1])/1280.0
+                x1 = float(Wykrywanie.pred[-1][0])
+                y1 = float(Wykrywanie.pred[-1][1])
+
+                angle = -math.atan(0.975)
+
+                x2 = 0
+                y2 = 0
+
+                #print x1, y1
+                if Wykrywanie.enable == True:
+                    x2 = x1*math.cos(angle)-y1*math.sin(angle)
+                    y2 = x2*math.tan(angle)+y1/math.cos(angle)
+
+                    x2 = 500 + x2/1024.0*350.0
+                    y2 = 40 + y2/1280.0*190.0
+                    #print x2, y2
+                    qp.drawRect(x2, y2, 20, 20)
 
     def plus(self):
         """
