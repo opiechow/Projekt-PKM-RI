@@ -87,9 +87,9 @@ def bfs(s,c):
                     Q.append(v)
         colors[u] = "BLACK"
 
-    for k in colors:
-        if colors[k] == "BLACK":
-            print k+1, colors[k]
+    # for k in colors:
+    # if colors[k] == "BLACK":
+    #     print k+1, colors[k]
     # for k in distance:
     #     print k+1, distance[k]
     # for k in parent:

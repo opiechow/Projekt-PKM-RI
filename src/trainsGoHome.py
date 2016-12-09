@@ -19,7 +19,8 @@ class CamCM():
 
 def get_zone(arg):
     print arg
-    return random.randint(1,10)
+    if arg(0):
+        return random.randint(1,10)
 
 def find_train(whichCam):
     with CamCM(whichCam) as camera:
@@ -44,61 +45,72 @@ def find_train(whichCam):
                 return -1,-1
         x = 0
         y = 0
-        for element in lel:
-            y += element[0][0]
-            x += element[0][1]
-        y = y / len(lel)
-        x = x / len(lel)
+        try:
+            for element in lel:
+                y += element[0][0]
+                x += element[0][1]
+            y = y / len(lel)
+            x = x / len(lel)
+        except:
+            print "Brak odczytu z kamery"
     return x, y
 
 
 # #inicjalizacja
-# tc = TrainCommunicator()
-# tc.connect()
-# train_coords1 = {}
-# train_coords2 = {}
-# trainz_not_found = list(range(1,7))
-#
-#
-# #pomiar z pierwszej kamery
-# for train in trainz_not_found:
-#     tc.set_speed_direction(train,40,0)
-#     x,y = find_train("rtsp://admin:DoTestowania@172.20.16.105/profile2/media.smp")
-#     if (x,y) == (-1,-1):
-#         print str(train) + ": not found."
-#     tc.set_speed_direction(train,0,0)
-#     sleep(1) # wait until stops
-#     if x > -1:
-#         train_coords1[train] = x,y
-#         trainz_not_found.remove(train)
-#
-#
-# #pomiar z drugiej kamery
-# for train in trainz_not_found:
-#     tc.set_speed_direction(train,40,1)
-#     x,y = find_train("rtsp://admin:DoTestowania@172.20.16.106/profile2/media.smp")
-#     if (x,y) == (-1,-1):
-#         print str(train) + ": not found."
-#     tc.set_speed_direction(train,0,0)
-#     sleep(1)  # wait until stops
-#     if x > -1:
-#         train_coords2[train] = x,y
-#         trainz_not_found.remove(train)
-#
-# #nie mamy funkcji mapujacej wspolrzedne z kamer na strefy, zatem wybieramy losowa strefe spod kamery i wyznaczamy trase
-# #wrzucamy je do dicta
-# train_coords = train_coords1.copy()
-# train_coords.update(train_coords2)
-#
-# print train_coords
-# train_zone_mapping = {}
-# for key in train_coords:
-#     train_zone_mapping[key] = get_zone(train_coords[key])
-#
-# print train_zone_mapping
-droga = strefyWycinekOperacyjny.bfs(21,23)
-print droga
+tc = TrainCommunicator()
+tc.connect()
+train_coords1 = {}
+train_coords2 = {}
+trainz_not_found = list(range(1,7))
 
+
+#pomiar z pierwszej kamery
+for train in trainz_not_found:
+    tc.set_speed_direction(train,40,1)
+    x,y = find_train("rtsp://admin:DoTestowania@172.20.16.105/profile2/media.smp")
+    if (x,y) == (-1,-1):
+        print str(train) + ": not found."
+    tc.set_speed_direction(train,0,0)
+    sleep(1) # wait until stops
+    if x > -1:
+        train_coords1[train] = x,y
+        trainz_not_found.remove(train)
+
+
+#pomiar z drugiej kamery
+for train in trainz_not_found:
+    tc.set_speed_direction(train,40,1)
+    x,y = find_train("rtsp://admin:DoTestowania@172.20.16.106/profile2/media.smp")
+    if (x,y) == (-1,-1):
+        print str(train) + ": not found."
+    tc.set_speed_direction(train,0,0)
+    sleep(1)  # wait until stops
+    if x > -1:
+        train_coords2[train] = x,y
+        trainz_not_found.remove(train)
+
+#nie mamy funkcji mapujacej wspolrzedne z kamer na strefy, zatem wybieramy losowa strefe spod kamery i wyznaczamy trase
+#wrzucamy je do dicta
+train_coords = train_coords1.copy()
+train_coords.update(train_coords2)
+
+print train_coords
+train_zone_mapping = {}
+train_destinationz = {1:23,2:16,3:1,6:6}
+for key in train_coords:
+    train_zone_mapping[key] = get_zone(train_coords[key])
+
+print train_zone_mapping
+train_routes = {}
+for train in train_zone_mapping:
+    if train in train_destinationz:
+        try:
+            droga = strefyWycinekOperacyjny.bfs(train_zone_mapping[train], train_destinationz[train])
+        except:
+            print("Niepsojny graf, przejscia nie ma dla pociagu:" + str(train))
+        train_routes[train] = droga
+
+print(train_routes)
 # for train in range(7):
 #     ret, frame = vcap.read()
 #     tc.set_speed_direction(train,50,0)
