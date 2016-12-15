@@ -1,7 +1,7 @@
-import socket
 import binascii
 import logging
-
+import socket
+import threading
 from time import sleep
 
 class TrainCommunicator(object):
@@ -11,31 +11,69 @@ class TrainCommunicator(object):
         """
     def __init__(self):
         self.connection = None     #Placeholder for socket
+        self.socket_lock = threading.Lock()
+        self.mushroom = False
+        self.trains_taken_over = []
+
+    def handle_recieved(self, once):
+        while True:
+            assert self.connection is not None  # cannot recieve from None socket
+            self.socket_lock.acquire()
+            self.connection.setblocking(False)
+            try:
+                msg = self.recieve_data()
+                if "6100" in msg:
+                    logging.debug("Mushroom on!")
+                    self.mushroom = True
+                elif "6101" in msg:
+                    logging.debug("Mushroom off!")
+                    self.mushroom = False
+                elif "e34000" in msg:
+                    self.trains_taken_over.append(int(msg[-2:], 16))
+                    logging.debug("Train taken over: " + msg[-2:])
+            except:
+                pass
+            self.connection.setblocking(True)
+            self.socket_lock.release()
+            if once:
+                break
+            sleep(0.1)
+
+    def recieve_data(self):
+        """Recieves data directly from socket
+         NOTE: Socket lock is assumed to be taken by the caller
+
+        :return: Hexlified extracted message (no header, no xor)
+        """
+        response = self.connection.recv(64)  # recieve response (raw data)
+        response = binascii.hexlify(response)  # covert to readable format
+        response = response[4:]  # strip header
+        xor = response[-2:]  # get cheksum
+        response = response[:-2]  # strip chekscum
+        logging.debug("Recieved: " + response + " XOR: " + str(xor))
+        if self.calculate_checksum(response) != xor:  # check if cheksum ok
+            raise Exception("Communication error: BAD CHEKSUM")
+        return response
 
     def send_data(self,msg):
         """Sends a message with prepended header and appended checksum
               Args:
                   msg: message prepared to send
               Returns:
-                  None
+                  Recived response for ruther handling.
               """
+        self.handle_recieved(True)  #if there is something, clear the buffer
         assert isinstance(self.connection,socket.socket)    #check if socket is set
         xor = self.calculate_checksum(msg)                  #calculate cheksum byte
         logging.debug("Sending: " + str(msg) + " XOR: " + str(xor))
         msg += xor                                     #append XOR byte
         msg = "fffe" + msg                             #add header
-        msg = binascii.unhexlify(msg)                  #convert to raw data
-        self.connection.send(msg)                      #send it
-        response = self.connection.recv(64)            #recieve response
-        response = binascii.hexlify(response)          #covert to readable
-        response = response[4:]                        #strip header
-        xor = response[-2:]                            #get cheksum
-        response = response [:-2]                      #strip chekscum
-        logging.debug("Recieved: " + response + " XOR: " + str(xor))
-        if self.calculate_checksum(response) != xor:   #check if cheksum ok
-            raise Exception("Communication error: BAD CHEKSUM")
-        else:
-            logging.debug("Cheksum OK")
+        msg = binascii.unhexlify(msg)  # convert to raw data to send
+        self.socket_lock.acquire()
+        self.connection.send(msg)
+        msg = self.recieve_data()
+        self.socket_lock.release()  # done communicating, rel lock
+        return msg
 
     def connect(self, ip='192.168.0.200', port=5550):
         """Connect with the command station
@@ -49,6 +87,8 @@ class TrainCommunicator(object):
         self.connection.connect((ip,port))
         data = "f101"
         self.send_data(data)
+        self.command_station_status_request()  # this sets the self.mushroom to the init value
+        threading._start_new_thread(self.handle_recieved, (False,))
 
     def calculate_checksum(self,msg):
         """Calculates the checksum for the message
@@ -85,14 +125,17 @@ class TrainCommunicator(object):
         cmd = "2181"
         self.send_data(cmd)
         self.connection.recv(64) # workaround
+        self.mushroom = False
 
     def emergency_off(self):
         cmd = "2180"
         self.send_data(cmd)
+        self.mushroom = True
 
     def emergency_stop(self):
         cmd = "80"
         self.send_data(cmd)
+        self.mushroom = True
 
     def command_station_software_version_request(self):
         cmd = "2121"
@@ -142,6 +185,8 @@ class TrainCommunicator(object):
         """
         assert(speed < 128 and speed >= 0)
         assert(dir in (0,1))
+        if loco in self.trains_taken_over:
+            self.trains_taken_over.remove(loco)
         if loco < 16:
             loco = "0" + hex(loco)[2:]
         else:
@@ -161,7 +206,13 @@ class TrainCommunicator(object):
         cmd = "440000" + loco + "03"   #ustalic XOR, MTR=1-99
         self.send_data(cmd)                                 #R=0 jesli kierunek sie zgadza, R=1 jesli jest przeciwny
 
-    # TODO: Implement this methods if needed
+    def command_station_status_request(self):
+        cmd = "2124"
+        response = self.send_data(cmd)
+        if response[-1:] != "0":
+            self.mushroom = True
+
+            # TODO: Implement this methods if needed
     # def emergency_stop_a_locomotive(self, address):
     #     cmd = "92000" + address + XOR     #ustalic XOR
     #     self.send_data(cmd)
@@ -215,9 +266,6 @@ class TrainCommunicator(object):
     #     cmd = "e344000" + address + XOR
     #     self.send_data(cmd)
     #
-    # def command_station_status_request(self):
-    #     cmd = "212405"
-    #     self.send_data(cmd)
     #
     # def set_command_station_power_up_mode(self, M):
     #     cmd = "2222" + M + XOR      #M = 0 wlaczenie manualne lokomotyw bez podania predkosci
