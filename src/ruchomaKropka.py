@@ -6,6 +6,7 @@ from PyQt4.QtGui import QPixmap, QApplication, QColor
 from scipy.signal import lti, step
 from scipy import linspace
 import time as t
+import kalmen
 
 # klasa kropki na mapie udajacej pociag. Zadna z funkcji w tej klasie nie odpowiada za sterowanie realnym pociagiem. Powinny byc wywolywane razem z
 # f-cjami sterujacymi pociagami
@@ -14,6 +15,7 @@ class RuchomyPociag(threading.Thread):
     x = 0
     y = 0
     angle = 0
+    prevSpeed = 0
 
     def __init__(self, xinit, yinit, veloc, ang, direction):
         """
@@ -30,12 +32,12 @@ class RuchomyPociag(threading.Thread):
         self.hamuj = False
         self.ruszaj = False
         self.dir = direction
-        numR = 0.5869
+        numR = 0.5869 * 5.1
         denR = [8.4184, 5.00, 3.000]
         tfR = lti(numR, denR)
         self.czas = 5.
         self.maxVel = veloc
-
+        self.kalmen = kalmen.kalmenFilter()
         tR, stepR = step(tfR, T = linspace(0, self.czas, self.czas*100))
         self.model = {}
         self.modelRev = {}
@@ -49,6 +51,7 @@ class RuchomyPociag(threading.Thread):
         self.model [czasHalf] = (self.model [czasHalf - 0.01] + self.model [czasHalf + 0.01])/2
 
         self.time = 0
+        self.czaz = t.time()
         self.brakingVel = 0
         self.x = xinit
         self.y = yinit
@@ -135,9 +138,10 @@ class RuchomyPociag(threading.Thread):
             red6 = QtGui.qRed(c6)/3./255 + QtGui.qGreen(c6)/3./255 + QtGui.qBlue(c6)/3./255
             red7 = QtGui.qRed(c7)/3./255 + QtGui.qGreen(c7)/3./255 + QtGui.qBlue(c7)/3./255
 
-
-        self.x += self.velocity * math.cos(self.angle)
-        self.y -= self.velocity * math.sin(self.angle)
+        tajm = (t.time() - self.czaz) * 8
+        self.czaz = t.time()
+        self.x += self.velocity * tajm * math.cos(self.angle)
+        self.y -= self.velocity * tajm * math.sin(self.angle)
 
     def setPos(self, x, y):
         """
@@ -188,9 +192,15 @@ class RuchomyPociag(threading.Thread):
         :return: None
         """
         self.time = round((self.time)*100)/100
+        if self.time >= self.czas:
+            self.ruszaj = False
+            self.time = self.czas
         if self.ruszaj:
-            self.velocity = self.maxVel * self.model[self.time]
-            self.time = t.time() - self.licznik
+            try:
+                self.velocity = self.maxVel * self.model[self.time]
+                self.time = t.time() - self.licznik
+            except:
+                pass
         elif self.hamuj:
             try:
                 if not self.velocity == 0:
@@ -201,6 +211,3 @@ class RuchomyPociag(threading.Thread):
                 self.velocity = 0
         if self.ruszaj or self.hamuj:
             self.time = t.time() - self.licznik
-        if self.time >= self.czas:
-            self.ruszaj = False
-            self.time = self.czas

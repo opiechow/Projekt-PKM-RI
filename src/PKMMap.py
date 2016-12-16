@@ -1,23 +1,22 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
+import random
+
 from PyQt4.QtCore import Qt
 import time as t
 import math
 import ruchomaKropka
-import wykrywanieRuchuNaFilmiku as Wykrywanie
-import thread
 from PyQt4 import QtCore
+import pociagiISterfy as strefyIPociagi
 from PyQt4 import QtGui
 import busControl
+import techDiag
 
 # Przykładowy program z kropka jadaca po linii.
 # ID POCIĄGÓW:
 # 2 - Wrzeszcz - Banino
 # 1 - Kiełpinek - Wrzeszcz
 # 0 - Wrzeszcz - Kiełpinek
-
-thread.start_new_thread(Wykrywanie.analiza, ())
-time.sleep(2.0)
 
 class Nastawa:
     """
@@ -52,6 +51,7 @@ class Czujnik:
         self.timeout = 0
         self.Aktywny = czyA
         self.nastawy = []
+        self.pociagi = []
 
 class Map(QtGui.QWidget):
     """
@@ -68,18 +68,12 @@ class Map(QtGui.QWidget):
         self.scaleObr = 1
         self.xsize = 10
         self.skala = 1
-        self.czasyStania = [0, 0, 0]
-        self.czasyStaniaPocz = [0, 0, 0]
-        # zliczanie przejazdow przez konktetne balisy (do zatrzymywania pociagow)
-        self.przejazdyW = 0
-        self.przejazdyK = 0
-        self.przejazdyS = 0
-        self.przejazdyT = 0
-        self.przejazdyI = 0
-        self.przejazdyE = 0
-        self.przejazdyB = 0
-        self.stopped = [False, False, False]
-        self.pociagi = [1, 2, 3]
+        self.przejscieDoStrefyTrzy = False
+        self.przej = [-1, -1, -1, -1]
+        self.czasyStania = [0, 0, 0, 0]
+        self.pociagi = [1, 2, 6, 3]
+        self.czasyStaniaPocz = [0, 0, 0, 0]
+        self.stopped = [False, False, False, False]
         # stacja, na ktorej stoi pociag. Od stacji zalezy dalszy kierunek ruchu
         self.stacja = ['', '', '', '']
         self.zwrotnica = [1,1]
@@ -92,9 +86,12 @@ class Map(QtGui.QWidget):
                         "#888800",
                         "#00EEEE"]
         # Tutaj wrzucamy pociagi.
-        self.addTrain(1190, 35, 15, 180, 'forward', 2)
-        self.addTrain(602, 505, 17, 0, 'backward', 1)
-        self.addTrain(1187, 15, 10, 180, 'forward', 0)
+        # self.addTrain(20, 700, 14, 180, 'forward', 0)
+        self.addTrain(1180, 35, strefyIPociagi.speedP[0], 180, 'forward', 0)
+        self.addTrain(600, 510, strefyIPociagi.speedP[1], 0, 'backward', 1)
+        # self.addTrain(5, 5, 13, 0, 'backward', 1)
+        self.addTrain(1178, 20, strefyIPociagi.speedP[2], 180, 'forward', 2)
+        self.addTrain(1178, 15, strefyIPociagi.speedP[3], 180, 'forward', 3)
         # ---------------------------------------------------------
         self.timer = QtCore.QTimer()
         self.timer.timeout.connect(self.tick)
@@ -116,6 +113,8 @@ class Map(QtGui.QWidget):
         self.strzyzaTimer = 0
         self.strzyzaTimerPocz = 0
         self.strzyzaTimerZalaczony = 0
+
+        self.diag = techDiag.TrainsDelays(self.czujniki, 3)
 
     def addTrain(self, x, y, vel, ang, dir, col):
         """
@@ -140,39 +139,57 @@ class Map(QtGui.QWidget):
         # odswierzenie obrazu
         self.repaint()
         # Kolejne cykle symuacji
-        if self.saved >= 5:
+        if self.saved == 5:
             for train, _ in self.trains:
+                train.czaz = t.time()
+                # if train.prevSpeed != 0:
+                #     train.velocity = train.prevSpeed
+                #     train.czaz = t.time()
+                #     train.prevSpeed = 0
+        if self.saved > 5:
+            for train, color in self.trains:
+                # if not color == self.colours[1]:
                 train.move(self.img)
                 train.updateSpeed()
         # reset timeoutow (czasow dezaktywacji) po ich uplynieciu (potem mozna sprawdzac, czy jest 0 na timeoucie: jesli jest to mozna aktywowac ponownie)
         for czujnik in self.czujniki:
             if czujnik.timeout < t.time():
                 czujnik.timeout = 0
-        # timer do zatrzymania na Osowie. Jako, ze nie ma balis, to trzeba po przejechaniu przez najblizsza odczekac czas jaki pociagowi zajmie dojazd na peron
-        if not self.osowaTimerZalaczony == 0:
-            if self.osowaStopTimerPocz - self.osowaStopTimer > 0.:
-                self.osowaStopTimer = t.time()
-            else:
-                if self.osowaTimerZalaczony == 1:
-                    self.czasyStania[2] = t.time()
-                    self.czasyStaniaPocz[2] = t.time() + 10
-                    self.stacja[2] = 'F'
 
-                self.osowaTimerZalaczony = 0
-        # podobnie jak na Osowie, timer dla Strzyzy od strony Kielpinka
-        if not self.strzyzaTimerZalaczony == 0:
-            if self.strzyzaTimerPocz - self.strzyzaTimer > 0.:
-                self.strzyzaTimer = t.time()
-            else:
-                if self.strzyzaTimerZalaczony == 1:
-                    self.czasyStania[0] = t.time()
-                    self.czasyStaniaPocz[0] = t.time() + 10
-                    self.stacja[0] = 'T'
-                if self.strzyzaTimerZalaczony == 2:
-                    self.czasyStania[1] = t.time()
-                    self.czasyStaniaPocz[1] = t.time() + 15
-                    self.stacja[1] = 'T'
-                self.strzyzaTimerZalaczony = 0
+        for item in strefyIPociagi.punktyZmianyStrefy:
+            for pociag in strefyIPociagi.pociagi:
+                destin = -1
+                for przejscie in item[1:]:
+                    if przejscie[0] == pociag.strefa[0] and przejscie[1] == pociag.strefaNast[0]:
+                        destin = przejscie[1]
+                if not destin == -1:
+                    train = self.trains[pociag.nr]
+                    rect = QtCore.QRect(train[0].x, train[0].y-10, 20, 20)
+                    rect2 = QtCore.QRect(item[0].x()*self.xsize, item[0].y()*self.xsize, 20, 20)
+                    if rect2.intersects(rect):
+                        self.przej[pociag.nr] = [pociag, destin]
+        for item in self.przej:
+            if not type(item) == int:
+                pociag, destin = item
+                self.wjazd(destin, pociag)
+                self.przej[pociag.nr] = -1
+
+        for pociag in strefyIPociagi.pociagi:
+            if not pociag.stopWhile.__len__() == 0:
+                if not self.stopped[pociag.nr]:
+                    self.trains[pociag.nr][0].zahamujSie()
+                    self.kom.set_speed(self.pociagi[pociag.nr], 'stop')
+                    self.kom.set_speed(self.pociagi[pociag.nr], 'stop')
+                    self.kom.set_speed(self.pociagi[pociag.nr], 'stop')
+                    print pociag.stopWhile
+                    self.stopped[pociag.nr] = True
+                pociag.stopWhile = []
+                self.sprawdzZajetosci(pociag)
+                if pociag.stopWhile.__len__() == 0:
+                    self.trains[pociag.nr][0].zahamujSie()
+                    self.stopped[pociag.nr] = True
+                    self.czasyStania[pociag.nr] = t.time()
+                    self.czasyStaniaPocz[pociag.nr] = t.time() + random.random()*5
         # timer stania: na poczatku wysylamy sygnal stop, po uplynieciu jedziemy dalej (kierunek zalezny od stacji)
         for i in range(self.czasyStania.__len__()):
             if self.czasyStaniaPocz[i] - self.czasyStania[i] > 0.:
@@ -181,86 +198,92 @@ class Map(QtGui.QWidget):
                     self.kom.set_speed(self.pociagi[i], 'stop')
                     self.kom.set_speed(self.pociagi[i], 'stop')
                     self.kom.set_speed(self.pociagi[i], 'stop')
+                    print str(i)+" stop"
                     self.trains[i][0].zahamujSie()
                     self.stopped[i] = True
-            else:
-                if self.stacja[i] == 'W':
-                    self.kom.set_speed(self.pociagi[i], 'przod')
-                    self.kom.set_speed(self.pociagi[i], 'przod')
-                    self.kom.set_speed(self.pociagi[i], 'przod')
-                    if self.trains[i][0].dir == 'backward':
-                        self.trains[i][0].dir = 'forward'
+            elif strefyIPociagi.pociagi[i].stopWhile.__len__() == 0:
+                if self.stopped[i]:
+                    kierunek = strefyIPociagi.pociagi[i].kierunek
+                    for num, kier in strefyIPociagi.pociagi[i].zmiany:
+                        if num == strefyIPociagi.pociagi[i].strefa[0]:
+                            kierunek = kier
+                    if not kierunek == strefyIPociagi.pociagi[i].kierunek:
+                        strefyIPociagi.pociagi[i].kierunek = kierunek
                         self.trains[i][0].turnAround()
-                    self.stacja[i] = ''
+                    for przejscie in strefyIPociagi.strefy[strefyIPociagi.pociagi[i].strefa[0]-1].przejscia:
+                            zona = przejscie[0]
+                            switchery = przejscie[1:]
+                            if zona == strefyIPociagi.pociagi[i].strefaNast[0]:
+                                for switch in switchery:
+                                    numer, stan = switch
+                                    if self.zwrotnice[numer] != stan:
+                                        self.switchSwitcher(numer)
+                    if strefyIPociagi.pociagi[i].strefa[0] == 3:
+                        self.trains[i][0].maxVel = strefyIPociagi.speedWP
+                        self.kom.set_speed(self.pociagi[i], 'wolnoprzod')
+                    elif strefyIPociagi.pociagi[i].kierunek == 't':
+                        self.trains[i][0].maxVel = strefyIPociagi.speedT[i]
+                        self.kom.set_speed(self.pociagi[i], 'tyl')
+                    elif strefyIPociagi.pociagi[i].kierunek == 'p':# and not strefyIPociagi.pociagi[i].strefa[0] == 19:
+                        self.trains[i][0].maxVel = strefyIPociagi.speedP[i]
+                        self.kom.set_speed(self.pociagi[i], 'przod')
+                    # elif strefyIPociagi.pociagi[i].kierunek == 'p' and strefyIPociagi.pociagi[i].strefa[0] == 19:
+                    #     self.trains[i][0].maxVel = strefyIPociagi.speedP[i]+1
+                    #     self.kom.set_speed(self.pociagi[i], 'przod')
+
+                    # self.trains[i][0].maxVel = 10
                     self.trains[i][0].ruszSie()
                     self.stopped[i] = False
-                elif self.stacja[i] == 'K':
-                    self.kom.set_speed(self.pociagi[i], 'tyl')
-                    self.kom.set_speed(self.pociagi[i], 'tyl')
-                    self.kom.set_speed(self.pociagi[i], 'tyl')
-                    if self.trains[i][0].dir == 'forward':
-                        self.trains[i][0].dir = 'backward'
-                        self.trains[i][0].turnAround()
-                    self.stacja[i] = ''
-                    self.trains[i][0].ruszSie()
-                    self.stopped[i] = False
-                elif self.stacja[i] == 'S':
-                    self.kom.set_speed(self.pociagi[i], 'przod')
-                    self.kom.set_speed(self.pociagi[i], 'przod')
-                    self.kom.set_speed(self.pociagi[i], 'przod')
-                    if self.trains[i][0].dir == 'backward':
-                        self.trains[i][0].dir = 'forward'
-                        self.trains[i][0].turnAround()
-                    self.stacja[i] = ''
-                    self.trains[i][0].ruszSie()
-                    self.stopped[i] = False
-                elif self.stacja[i] == 'T':
-                    self.kom.set_speed(self.pociagi[i], 'tyl')
-                    self.kom.set_speed(self.pociagi[i], 'tyl')
-                    self.kom.set_speed(self.pociagi[i], 'tyl')
-                    if self.trains[i][0].dir == 'forward':
-                        self.trains[i][0].dir = 'backward'
-                        self.trains[i][0].turnAround()
-                    self.stacja[i] = ''
-                    self.trains[i][0].ruszSie()
-                    self.stopped[i] = False
-                elif self.stacja[i] == 'E':
-                    self.kom.set_speed(self.pociagi[i], 'przod')
-                    self.kom.set_speed(self.pociagi[i], 'przod')
-                    self.kom.set_speed(self.pociagi[i], 'przod')
-                    if self.trains[i][0].dir == 'backward':
-                        self.trains[i][0].dir = 'forward'
-                        self.trains[i][0].turnAround()
-                    self.stacja[i] = ''
-                    self.trains[i][0].ruszSie()
-                    self.stopped[i] = False
-                elif self.stacja[i] == 'F':
-                    self.kom.set_speed(self.pociagi[i], 'wolnoprzod')
-                    self.kom.set_speed(self.pociagi[i], 'wolnoprzod')
-                    self.kom.set_speed(self.pociagi[i], 'wolnoprzod')
-                    if self.trains[i][0].dir == 'backward':
-                        self.trains[i][0].dir = 'forward'
-                        self.trains[i][0].turnAround()
-                    self.stacja[i] = ''
-                    self.trains[i][0].maxVel = 5
-                    self.trains[i][0].ruszSie()
-                    self.stopped[i] = False
-                elif self.stacja[i] == 'B':
-                    self.kom.set_speed(self.pociagi[i], 'tyl')
-                    self.kom.set_speed(self.pociagi[i], 'tyl')
-                    self.kom.set_speed(self.pociagi[i], 'tyl')
-                    self.trains[2][0].setPos((self.czujniki[3].x*self.xsize+40), (self.czujniki[3].y*self.xsize+30))
-                    if self.trains[i][0].dir == 'forward':
-                        self.trains[i][0].dir = 'backward'
-                        self.trains[i][0].turnAround()
-                    self.stacja[i] = ''
-                    self.trains[i][0].maxVel = 10
-                    self.trains[i][0].ruszSie()
-                    self.stopped[i] = False
+
+        # self.diag.tick(self.czujniki, self.trains)
 
         self.timer.start(10)
 
+    def wjazd(self, strefa, pociag):
+        # print pociag.strefa[0], pociag.nr
+        pociag.strefa = pociag.strefaNast
+        if pociag.indeksStrefy < pociag.trasa.__len__() - 2:
+            pociag.indeksStrefy += 1
+            pociag.strefaNast = pociag.trasa[pociag.indeksStrefy+1]
+        elif pociag.indeksStrefy == pociag.trasa.__len__() - 2:
+            pociag.indeksStrefy += 1
+            pociag.strefaNast = pociag.trasa[1]
+        elif pociag.indeksStrefy == pociag.trasa.__len__() - 1:
+            pociag.indeksStrefy = 1
+            pociag.strefaNast = pociag.trasa[pociag.indeksStrefy+1]
+        if pociag.strefa[1] > 0:
+            if not self.stopped[pociag.nr]:
+                # self.trains[pociag.nr][0].zahamujSie()
+                # self.stopped[pociag.nr] = True
+                self.czasyStania[pociag.nr] = t.time()
+                self.czasyStaniaPocz[pociag.nr] = t.time() + pociag.strefa[1]
+        self.sprawdzZajetosci(pociag)
+        if pociag.stopWhile.__len__() == 0:
+            for przejscie in strefyIPociagi.strefy[pociag.strefa[0]-1].przejscia:
+                zona = przejscie[0]
+                switchery = przejscie[1:]
+                if zona == pociag.strefaNast[0]:
+                    for switch in switchery:
+                        numer, stan = switch
+                        if self.zwrotnice[numer] != stan:
+                            self.switchSwitcher(numer)
 
+    def sprawdzZajetosci(self, pociag):
+        curZone = strefyIPociagi.getStrefa(pociag.strefa[0])
+        for strefa in curZone.zajetosci:
+            if type(strefa) == int:
+                for train in strefyIPociagi.pociagi:
+                    if train.strefa[0] == strefa:
+                        pociag.stopWhile.append(strefa)
+                        print strefa
+            else:
+                for item in strefa:
+                    foundTrains = 0
+                    for train in strefyIPociagi.pociagi:
+                        if train.strefa[0] == strefa:
+                            foundTrains += 1
+                    if foundTrains == strefa.__len__():
+                        pociag.stopWhile.append(strefa)
     def initUI(self):
         """
         obsluga czujnikow
@@ -288,6 +311,68 @@ class Map(QtGui.QWidget):
         #parametry okna
         self.setFixedWidth(13000)
         self.setFixedHeight(5400)
+
+# w timerze
+    def updateTrainCoordsCam(self):
+        # wywołanie funkcji kamery
+        #zwraca camX i camY
+        minDist = 10e5
+        minTrain = 0
+        # for train in self.trains:
+        #     dist = abs(train.x - camX)**2 + abs(train.y - camY)**2
+        #     if dist < minDist:
+        #         minDist = dist
+        #         minTrain = train
+        # minTrain.measure([minTrain.x, minTrain.y], [camX, camY], "kamera")
+
+    #w aktywacji balisy
+    def updateTrainCoordsBalisa(self, bal):
+        if self.czujniki[bal].pociagi.__len__() == 0:
+            minDist = 10e15
+            dists = []
+            minTrain = 0
+            for i in range(self.trains.__len__()):
+                dist = ((self.trains[i][0].x - self.czujniki[bal].x*self.xsize)**2 + (self.trains[i][0].y - self.czujniki[bal].y*self.xsize)**2)**0.5
+                dists.append(dist)
+                if dist < minDist:
+                    minDist = dist
+                    minTrain = i
+            reliable = True
+            for dist in dists:
+                # relDist = abs(dist-minDist)/dist
+                if 2 < dist - minDist < 50:
+                    reliable = False
+                    break
+            if reliable:
+                coords = self.trains[minTrain][0].kalmen.measure([self.trains[minTrain][0].x, self.trains[minTrain][0].y], [self.czujniki[bal].x, self.czujniki[bal].y], "czujnik", self.xsize)
+                self.trains[minTrain][0].x = self.czujniki[bal].x*self.xsize
+                self.trains[minTrain][0].y = self.czujniki[bal].y*self.xsize
+                # if bal == 17:
+                #     self.trains[minTrain][0].turnAround()
+        else:
+            minDist = 10e15
+            dists = []
+            minTrain = 0
+            for i in self.czujniki[bal].pociagi:
+                dist = ((self.trains[i][0].x - self.czujniki[bal].x*self.xsize)**2 + (self.trains[i][0].y - self.czujniki[bal].y*self.xsize)**2)**0.5
+                dists.append(dist)
+                if dist < minDist:
+                    minDist = dist
+                    minTrain = i
+            reliable = True
+            for dist in dists:
+                # relDist = abs(dist-minDist)/dist
+                if 2 < dist - minDist < 200:
+                    reliable = False
+                    break
+            if reliable:
+                coords = self.trains[minTrain][0].kalmen.measure([self.trains[minTrain][0].x, self.trains[minTrain][0].y], [self.czujniki[bal].x, self.czujniki[bal].y], "czujnik", self.xsize)
+                self.trains[minTrain][0].x = self.czujniki[bal].x*self.xsize
+                self.trains[minTrain][0].y = self.czujniki[bal].y*self.xsize
+
+            # minTrain = self.czujniki[bal].pociagi[0]
+            # self.trains[minTrain][0].x = self.czujniki[bal].x*self.xsize
+            # self.trains[minTrain][0].y = self.czujniki[bal].y*self.xsize
 
     def paintEvent(self, e):
         """
@@ -325,6 +410,10 @@ class Map(QtGui.QWidget):
             train.x *= self.xsize/self.skala
             train.y *= self.xsize/self.skala
             train.velocity *= self.xsize/self.skala
+            # if train.velocity != 0:
+            #     if train.prevSpeed == 0:
+            #         train.prevSpeed = train.velocity
+            #         train.velocity = 0
         self.skala = self.xsize
         self.rects = []
         self.makeRects()
@@ -354,7 +443,8 @@ class Map(QtGui.QWidget):
         qp.setPen(pen)
 
     def GrayPen(self, qp, pen):
-        gray = QtGui.QColor(200, 200, 200)
+        # gray = QtGui.QColor(200, 200, 200)
+        gray = QtGui.QColor(255, 255, 255)
         pen.setColor(gray)
         qp.setPen(pen)
 
@@ -396,10 +486,7 @@ class Map(QtGui.QWidget):
                 if self.czujniki[i].zone == 'N':
                     continue
                 color = QtGui.QColor(0, 255, 0)
-                if self.czujniki[i].aktywnyZerem:
-                    color.setNamedColor('#FF0000')
-                else:
-                    color.setNamedColor('#0000FF')
+                color.setNamedColor('#0000FF')
                 qp.setPen(color)
                 qp.setBrush(Qt.green)
                 qp.drawEllipse(self.czujniki[i].x*xsize-4*xsize, self.czujniki[i].y*xsize-4*xsize, 8*xsize, 8*xsize)
@@ -901,28 +988,8 @@ class Map(QtGui.QWidget):
                     y = (train.y - train.r/2)
                     r = train.r
                 qp.drawEllipse(x, y, r, r)
-
-            if len(Wykrywanie.pred) > 0:
-                qp.setPen(Qt.black)
-                qp.setBrush(Qt.black)
-                #print float(Wykrywanie.pred[-1][0])/1024.0, float(Wykrywanie.pred[-1][1])/1280.0
-                x1 = float(Wykrywanie.pred[-1][0])
-                y1 = float(Wykrywanie.pred[-1][1])
-
-                angle = -math.atan(0.975)
-
-                x2 = 0
-                y2 = 0
-
-                #print x1, y1
-                if Wykrywanie.enable == True:
-                    x2 = x1*math.cos(angle)-y1*math.sin(angle)
-                    y2 = x2*math.tan(angle)+y1/math.cos(angle)
-
-                    x2 = 500 + x2/1024.0*350.0
-                    y2 = 40 + y2/1280.0*190.0
-                    #print x2, y2
-                    qp.drawRect(x2, y2, 20, 20)
+                qp.drawRect(x,y,20,20)
+                qp.drawText(x,y-2, str(strefyIPociagi.pociagi[self.trains.index([train, colour])].strefa[0]))
 
     def plus(self):
         """
@@ -990,11 +1057,12 @@ class Map(QtGui.QWidget):
         :param poc: powiazany z nim pociag
         :return: None
         """
-        for nastawa in self.czujniki[czj].nastawy:
-            if nastawa.nr_poc == poc or nastawa.nr_poc == -1:
-                zwr = nastawa.nr_zwr
-                if self.zwrotnice[zwr] != nastawa.stan:
-                    self.switchSwitcher(zwr)
+        return
+        # for nastawa in self.czujniki[czj].nastawy:
+        #     if nastawa.nr_poc == poc or nastawa.nr_poc == -1:
+        #         zwr = nastawa.nr_zwr
+        #         if self.zwrotnice[zwr] != nastawa.stan:
+        #             self.switchSwitcher(zwr)
 
     def wczytaj_wspolrzedne(self):
         """
@@ -1015,76 +1083,85 @@ class Map(QtGui.QWidget):
         self.czujniki[2].y = 20
         self.czujniki[2].nr = 302
         self.czujniki[2].zone = 'B'
+        self.czujniki[2].pociagi.append(3)
 
         self.czujniki[3].x = 7
         self.czujniki[3].y = 26
         self.czujniki[3].nr = 301
         self.czujniki[3].zone = 'B'
-        self.czujniki[3].nastawy.append(Nastawa(1, -1, True))
-        self.czujniki[3].nastawy.append(Nastawa(26, -1, False))
-        self.czujniki[3].nastawy.append(Nastawa(27, -1, True))
-        self.czujniki[3].nastawy.append(Nastawa(28, -1, False))
+        self.czujniki[3].pociagi.append(3)
 
         self.czujniki[4].x = 437
         self.czujniki[4].y = 25
         self.czujniki[4].nr = 303
         self.czujniki[4].zone = 'B'
+        self.czujniki[4].pociagi.append(3)
 
         self.czujniki[5].x = 841
         self.czujniki[5].y = 14
         self.czujniki[5].nr = 606
         self.czujniki[5].zone = 'W'
+        self.czujniki[5].pociagi.append(3)
 
         self.czujniki[6].x = 868
         self.czujniki[6].y = 14
         self.czujniki[6].nr = 605
         self.czujniki[6].zone = 'W'
+        self.czujniki[6].pociagi.append(3)
 
         self.czujniki[7].x = 898
         self.czujniki[7].y = 15
         self.czujniki[7].nr = 604
         self.czujniki[7].zone = 'W'
+        self.czujniki[7].pociagi.append(3)
 
         self.czujniki[8].x = 923
         self.czujniki[8].y = 15
         self.czujniki[8].nr = 603
         self.czujniki[8].zone = 'W'
+        self.czujniki[8].pociagi.append(3)
 
         self.czujniki[9].x = 952
         self.czujniki[9].y = 15
         self.czujniki[9].nr = 602
         self.czujniki[9].zone = 'W'
+        self.czujniki[9].pociagi.append(3)
 
         self.czujniki[10].x = 977
         self.czujniki[10].y = 15
         self.czujniki[10].nr = 601
         self.czujniki[10].zone = 'W'
+        self.czujniki[10].pociagi.append(3)
 
         self.czujniki[11].x = 1042
         self.czujniki[11].y = 16
         self.czujniki[11].nr = 504
         self.czujniki[11].zone = 'W'
+        self.czujniki[11].pociagi.append(3)
 
         self.czujniki[12].x = 1169
         self.czujniki[12].y = 15
         self.czujniki[12].nr = 501
         self.czujniki[12].zone = 'W'
-        self.czujniki[12].nastawy.append(Nastawa(27, -1, False))
-        self.czujniki[12].nastawy.append(Nastawa(28, -1, False))
-        self.czujniki[12].nastawy.append(Nastawa(1, -1, False))
-        self.czujniki[12].nastawy.append(Nastawa(19, -1, True))
+        # self.czujniki[12].nastawy.append(Nastawa(27, -1, False))
+        # self.czujniki[12].nastawy.append(Nastawa(28, -1, False))
+        # self.czujniki[12].nastawy.append(Nastawa(1, -1, False))
+        # self.czujniki[12].nastawy.append(Nastawa(19, -1, True))
+        self.czujniki[12].pociagi.append(3)
 
         self.czujniki[13].x = 1035
         self.czujniki[13].y = 22
         self.czujniki[13].nr = 104
         self.czujniki[13].aktywnyZerem = True
         self.czujniki[13].zone = 'W'
+        self.czujniki[13].pociagi.append(2)
 
         self.czujniki[14].x = 720
         self.czujniki[14].y = 88
         self.czujniki[14].nr = 101
         self.czujniki[14].aktywnyZerem = True
         self.czujniki[14].zone = 'S'
+        self.czujniki[14].pociagi.append(2)
 
         self.czujniki[15].x = 727
         self.czujniki[15].y = 206
@@ -1100,8 +1177,8 @@ class Map(QtGui.QWidget):
         self.czujniki[17].nr = 103
         self.czujniki[17].aktywnyZerem = True
         self.czujniki[17].zone = 'K'
-        self.czujniki[17].nastawy.append(Nastawa(6, -1, True))
-        self.czujniki[17].nastawy.append(Nastawa(7, -1, True))
+        # self.czujniki[17].nastawy.append(Nastawa(6, -1, True))
+        # self.czujniki[17].nastawy.append(Nastawa(7, -1, True))
 
 
         self.czujniki[18].x = 627
@@ -1109,14 +1186,15 @@ class Map(QtGui.QWidget):
         self.czujniki[18].nr = 102
         self.czujniki[18].aktywnyZerem = True
         self.czujniki[18].zone = 'K'
-        self.czujniki[18].nastawy.append(Nastawa(6, -1, False))
-        self.czujniki[18].nastawy.append(Nastawa(8, -1, False))
+        self.czujniki[18].nastawy.append(Nastawa(9, -1, True))
+        self.czujniki[18].nastawy.append(Nastawa(8, -1, True))
 
         self.czujniki[19].x = 711
         self.czujniki[19].y = 101
         self.czujniki[19].nr = 102
         self.czujniki[19].aktywnyZerem = True
         self.czujniki[19].zone = 'S'
+        self.czujniki[19].pociagi.append(2)
 
 
         self.czujniki[20].x = 538
@@ -1147,26 +1225,28 @@ class Map(QtGui.QWidget):
         self.czujniki[25].nr = 108
         self.czujniki[25].aktywnyZerem = True
         self.czujniki[25].zone = 'W'
+        self.czujniki[25].pociagi.append(0)
+        self.czujniki[25].pociagi.append(1)
 
         self.czujniki[26].x = 920
         self.czujniki[26].y = 56
         self.czujniki[26].nr = 109
         self.czujniki[26].aktywnyZerem = True
         self.czujniki[26].zone = 'W'
-        self.czujniki[26].nastawy.append(Nastawa(12, -1, True))
+        # self.czujniki[26].nastawy.append(Nastawa(12, -1, True))
 
         self.czujniki[27].x = 733
         self.czujniki[27].y = 205
         self.czujniki[27].nr = 104
         self.czujniki[27].aktywnyZerem = True
         self.czujniki[27].zone = 'S'
-        self.czujniki[27].nastawy.append(Nastawa(12, -1, True))
-        self.czujniki[27].nastawy.append(Nastawa(14, -1, False))
-        self.czujniki[27].nastawy.append(Nastawa(13, -1, True))
-        self.czujniki[27].nastawy.append(Nastawa(15, -1, True))
-        self.czujniki[27].nastawy.append(Nastawa(12, -1, True))
-        self.czujniki[27].nastawy.append(Nastawa(17, -1, False))
-        self.czujniki[27].nastawy.append(Nastawa(31, -1, True))
+        # self.czujniki[27].nastawy.append(Nastawa(12, -1, True))
+        # self.czujniki[27].nastawy.append(Nastawa(14, -1, False))
+        # self.czujniki[27].nastawy.append(Nastawa(13, -1, True))
+        # self.czujniki[27].nastawy.append(Nastawa(15, -1, True))
+        # self.czujniki[27].nastawy.append(Nastawa(12, -1, True))
+        # self.czujniki[27].nastawy.append(Nastawa(17, -1, False))
+        # self.czujniki[27].nastawy.append(Nastawa(31, -1, True))
 
         self.czujniki[28].x = 818
         self.czujniki[28].y = 374
@@ -1190,6 +1270,8 @@ class Map(QtGui.QWidget):
         self.czujniki[31].nr = 110
         self.czujniki[31].aktywnyZerem = True
         self.czujniki[31].zone = 'W'
+        self.czujniki[31].pociagi.append(0)
+        self.czujniki[31].pociagi.append(1)
 
         self.czujniki[32].x = 1037
         self.czujniki[32].y = 44
@@ -1205,16 +1287,18 @@ class Map(QtGui.QWidget):
         self.czujniki[34].nr = 102
         self.czujniki[34].aktywnyZerem = True
         self.czujniki[34].zone = 'W'
-        self.czujniki[34].nastawy.append(Nastawa(31, -1, False))
-        self.czujniki[34].nastawy.append(Nastawa(32, -1, True))
-        self.czujniki[34].nastawy.append(Nastawa(21, -1, True))
-        self.czujniki[34].nastawy.append(Nastawa(15, -1, False))
-        self.czujniki[34].nastawy.append(Nastawa(32, -1, True))
-        self.czujniki[34].nastawy.append(Nastawa(13, -1, True))
-        self.czujniki[34].nastawy.append(Nastawa(14, -1, False))
-        self.czujniki[34].nastawy.append(Nastawa(12, -1, False))
-        self.czujniki[34].nastawy.append(Nastawa(5, -1, False))
-        self.czujniki[34].nastawy.append(Nastawa(4, -1, False))
+        # self.czujniki[34].nastawy.append(Nastawa(31, -1, False))
+        # self.czujniki[34].nastawy.append(Nastawa(32, -1, True))
+        # self.czujniki[34].nastawy.append(Nastawa(21, -1, True))
+        # self.czujniki[34].nastawy.append(Nastawa(15, -1, False))
+        # self.czujniki[34].nastawy.append(Nastawa(32, -1, True))
+        # self.czujniki[34].nastawy.append(Nastawa(13, -1, True))
+        # self.czujniki[34].nastawy.append(Nastawa(14, -1, False))
+        # self.czujniki[34].nastawy.append(Nastawa(12, -1, False))
+        # self.czujniki[34].nastawy.append(Nastawa(5, -1, False))
+        # self.czujniki[34].nastawy.append(Nastawa(4, -1, False))
+        self.czujniki[34].pociagi.append(0)
+        self.czujniki[34].pociagi.append(1)
 
         self.czujniki[35].x = 1040
         self.czujniki[35].y = 35
@@ -1227,10 +1311,10 @@ class Map(QtGui.QWidget):
         self.czujniki[36].nr = 301
         self.czujniki[36].aktywnyZerem = True
         self.czujniki[36].zone = 'W'
-        self.czujniki[36].nastawy.append(Nastawa(0, 3, True))
-        self.czujniki[36].nastawy.append(Nastawa(22, 3, False))
-        self.czujniki[36].nastawy.append(Nastawa(16, 3, True))
-        self.czujniki[36].nastawy.append(Nastawa(11, 3, False))
+        # self.czujniki[36].nastawy.append(Nastawa(0, 3, True))
+        # self.czujniki[36].nastawy.append(Nastawa(22, 3, False))
+        # self.czujniki[36].nastawy.append(Nastawa(16, 3, True))
+        # self.czujniki[36].nastawy.append(Nastawa(11, 3, False))
 
         self.czujniki[37].x = 1084
         self.czujniki[37].y = 32
@@ -1243,10 +1327,10 @@ class Map(QtGui.QWidget):
         self.czujniki[38].nr = 308
         self.czujniki[38].aktywnyZerem = True
         self.czujniki[38].zone = 'W'
-        self.czujniki[38].nastawy.append(Nastawa(29, 3, True))
-        self.czujniki[38].nastawy.append(Nastawa(22, 3, True))
-        self.czujniki[38].nastawy.append(Nastawa(23, 3, True))
-        self.czujniki[38].nastawy.append(Nastawa(24, 3, True))
+        # self.czujniki[38].nastawy.append(Nastawa(29, 3, True))
+        # self.czujniki[38].nastawy.append(Nastawa(22, 3, True))
+        # self.czujniki[38].nastawy.append(Nastawa(23, 3, True))
+        # self.czujniki[38].nastawy.append(Nastawa(24, 3, True))
 
         self.czujniki[39].x = 971
         self.czujniki[39].y = 43
@@ -1271,9 +1355,10 @@ class Map(QtGui.QWidget):
         self.czujniki[42].nr = 302
         self.czujniki[42].aktywnyZerem = True
         self.czujniki[42].zone = 'W'
-        self.czujniki[42].nastawy.append(Nastawa(29, 3, True))
-        self.czujniki[42].nastawy.append(Nastawa(24, 3, False))
-        self.czujniki[42].nastawy.append(Nastawa(18, 3, False))
+        # self.czujniki[42].nastawy.append(Nastawa(29, 3, True))
+        # self.czujniki[42].nastawy.append(Nastawa(24, 3, False))
+        # self.czujniki[42].nastawy.append(Nastawa(18, 3, False))
+        self.czujniki[42].pociagi.append(2)
 
         self.czujniki[43].x = 1131
         self.czujniki[43].y = 24
@@ -1300,6 +1385,10 @@ class Map(QtGui.QWidget):
         self.zwrotnice[number] = not self.zwrotnice[number]
         self.busControl.changeSwitcherByMap(number)
         self.saved = 3
+        # for train, _ in self.trains:
+        #     if train.velocity != 0:
+        #             train.prevSpeed = train.velocity
+        #             train.velocity = 0
 
     def switchSwitcherOnlyOnMap(self, number):
         """
@@ -1309,6 +1398,10 @@ class Map(QtGui.QWidget):
         """
         self.zwrotnice[number] = not self.zwrotnice[number]
         self.saved = 3
+        # for train, _ in self.trains:
+        #     if train.velocity != 0:
+        #             train.prevSpeed = train.velocity
+        #             train.velocity = 0
 
     def makeRects(self):
         """
@@ -1358,84 +1451,87 @@ class Map(QtGui.QWidget):
         :param bal: aktywowany czujnik
         :return: None
         """
-        if bal == 34:
-            self.przejazdyW += 1
-            if (self.przejazdyW - 2)%4 == 0:
-                self.czasyStania[1] = t.time()
-                self.czasyStaniaPocz[1] = t.time() + 10
-                self.stacja[1] = 'W'
-                self.trains[1][0].setPos((self.czujniki[34].x*self.xsize+40), (self.czujniki[34].y*self.xsize+20))
-            elif (self.przejazdyW)%4 == 0:
-                self.czasyStania[0] = t.time()
-                self.czasyStaniaPocz[0] = t.time() + 10
-                self.stacja[0] = 'W'
-                self.trains[0][0].setPos((self.czujniki[34].x*self.xsize+40), (self.czujniki[34].y*self.xsize+20))
-        elif bal == 15:
-            self.przejazdyS += 1
-            if (self.przejazdyS)%2 == 0:
-                self.czasyStania[1] = t.time()
-                self.czasyStaniaPocz[1] = t.time() + 15
-                self.stacja[1] = 'S'
-                self.trains[1][0].setPos((self.czujniki[15].x*self.xsize+50), (self.czujniki[15].y*self.xsize+50))
-            elif (self.przejazdyS)%2 == 1:
-                self.czasyStania[0] = t.time()
-                self.czasyStaniaPocz[0] = t.time() + 10
-                self.stacja[0] = 'S'
-                self.trains[0][0].setPos((self.czujniki[15].x*self.xsize+50), (self.czujniki[15].y*self.xsize+50))
-        elif bal == 28:
-            self.przejazdyT += 1
-            if self.przejazdyT%4 == 0:
-                self.czasyStania[0] = t.time()
-                self.czasyStaniaPocz[0] = t.time() + 10
-                self.stacja[0] = 'T'
-                self.trains[0][0].setPos((self.czujniki[27].x*self.xsize+15), (self.czujniki[27].y*self.xsize+60))
-            elif self.przejazdyT%4 == 2:
-                self.czasyStania[1] = t.time()
-                self.czasyStaniaPocz[1] = t.time() + 15
-                self.stacja[1] = 'T'
-                self.trains[1][0].setPos((self.czujniki[27].x*self.xsize+15), (self.czujniki[27].y*self.xsize+60))
-        elif bal == 18:
-            self.przejazdyK += 1
-            if (self.przejazdyK - 2)%4 == 0:
-                self.czasyStania[0] = t.time()
-                self.czasyStaniaPocz[0] = t.time() + 10
-                self.stacja[0] = 'K'
-                self.trains[0][0].setPos((self.czujniki[18].x*self.xsize+40), (self.czujniki[18].y*self.xsize+55))
-            elif (self.przejazdyK)%4 == 0:
-                self.czasyStania[1] = t.time()
-                self.czasyStaniaPocz[1] = t.time() + 10
-                self.stacja[1] = 'K'
-                self.trains[1][0].setPos((self.czujniki[18].x*self.xsize+40), (self.czujniki[18].y*self.xsize+55))
-        elif bal == 3:
-            self.przejazdyB += 1
-            if (self.przejazdyB)%2 == 1:
-                self.osowaStopTimer = t.time()
-                self.osowaStopTimerPocz = t.time() #+ self.secondsForOsowaCostam
-                self.osowaTimerZalaczony = 2
-                self.trains[2][0].setPos((self.czujniki[3].x*self.xsize+40), (self.czujniki[3].y*self.xsize+30))
-        elif bal == 12:
-            self.przejazdyE += 1
-            if (self.przejazdyE)%2 == 0:
-                self.czasyStania[2] = t.time()
-                self.czasyStaniaPocz[2] = t.time() + 10
-                self.stacja[2] = 'E'
-                self.trains[2][0].setPos((self.czujniki[12].x*self.xsize+40), (self.czujniki[12].y*self.xsize+40))
-        elif bal == 4:
-            self.osowaStopTimer = t.time()
-            self.osowaStopTimerPocz = t.time() + self.secondsForOsowaPeron
-            self.osowaTimerZalaczony = 1
-        elif bal == 29:
-            self.przejazdyI += 1
-            self.strzyzaTimer = t.time()
-            self.strzyzaTimerPocz = t.time() + self.secondsForStrzyza
-            if (self.przejazdyI)%2 == 0:
-                self.strzyzaTimerZalaczony = 1
-                self.trains[0][0].setPos((self.czujniki[29].x*self.xsize+20), (self.czujniki[29].y*self.xsize+20))
-                self.trains[0][0].angle = math.pi/4
-            elif (self.przejazdyI)%2 == 1:
-                self.trains[1][0].setPos((self.czujniki[29].x*self.xsize+20), (self.czujniki[29].y*self.xsize+20))
-                self.trains[1][0].angle = math.pi/4
-                self.strzyzaTimerZalaczony = 2
+        self.updateTrainCoordsBalisa(bal)
+        # if bal == 3:
+        #     self.przejscieDoStrefyTrzy = True
+        # if bal == 34:
+        #     self.przejazdyW += 1
+        #     if (self.przejazdyW - 2)%4 == 0:
+        #         self.czasyStania[1] = t.time()
+        #         self.czasyStaniaPocz[1] = t.time() + 10
+        #         self.stacja[1] = 'W'
+        #         self.trains[1][0].setPos((self.czujniki[34].x*self.xsize+40), (self.czujniki[34].y*self.xsize+20))
+        #     elif (self.przejazdyW)%4 == 0:
+        #         self.czasyStania[0] = t.time()
+        #         self.czasyStaniaPocz[0] = t.time() + 10
+        #         self.stacja[0] = 'W'
+        #         self.trains[0][0].setPos((self.czujniki[34].x*self.xsize+40), (self.czujniki[34].y*self.xsize+20))
+        # elif bal == 15:
+        #     self.przejazdyS += 1
+        #     if (self.przejazdyS)%2 == 0:
+        #         self.czasyStania[1] = t.time()
+        #         self.czasyStaniaPocz[1] = t.time() + 15
+        #         self.stacja[1] = 'S'
+        #         self.trains[1][0].setPos((self.czujniki[15].x*self.xsize+50), (self.czujniki[15].y*self.xsize+50))
+        #     elif (self.przejazdyS)%2 == 1:
+        #         self.czasyStania[0] = t.time()
+        #         self.czasyStaniaPocz[0] = t.time() + 10
+        #         self.stacja[0] = 'S'
+        #         self.trains[0][0].setPos((self.czujniki[15].x*self.xsize+50), (self.czujniki[15].y*self.xsize+50))
+        # elif bal == 28:
+        #     self.przejazdyT += 1
+        #     if self.przejazdyT%4 == 0:
+        #         self.czasyStania[0] = t.time()
+        #         self.czasyStaniaPocz[0] = t.time() + 10
+        #         self.stacja[0] = 'T'
+        #         self.trains[0][0].setPos((self.czujniki[27].x*self.xsize+15), (self.czujniki[27].y*self.xsize+60))
+        #     elif self.przejazdyT%4 == 2:
+        #         self.czasyStania[1] = t.time()
+        #         self.czasyStaniaPocz[1] = t.time() + 15
+        #         self.stacja[1] = 'T'
+        #         self.trains[1][0].setPos((self.czujniki[27].x*self.xsize+15), (self.czujniki[27].y*self.xsize+60))
+        # elif bal == 18:
+        #     self.przejazdyK += 1
+        #     if (self.przejazdyK - 2)%4 == 0:
+        #         self.czasyStania[0] = t.time()
+        #         self.czasyStaniaPocz[0] = t.time() + 10
+        #         self.stacja[0] = 'K'
+        #         self.trains[0][0].setPos((self.czujniki[18].x*self.xsize+40), (self.czujniki[18].y*self.xsize+55))
+        #     elif (self.przejazdyK)%4 == 0:
+        #         self.czasyStania[1] = t.time()
+        #         self.czasyStaniaPocz[1] = t.time() + 10
+        #         self.stacja[1] = 'K'
+        #         self.trains[1][0].setPos((self.czujniki[18].x*self.xsize+40), (self.czujniki[18].y*self.xsize+55))
+        # elif bal == 3:
+        #     self.przejazdyB += 1
+        #     if (self.przejazdyB)%2 == 1:
+        #         self.osowaStopTimer = t.time()
+        #         self.osowaStopTimerPocz = t.time() #+ self.secondsForOsowaCostam
+        #         self.osowaTimerZalaczony = 2
+        #         self.trains[2][0].setPos((self.czujniki[3].x*self.xsize+40), (self.czujniki[3].y*self.xsize+30))
+        # elif bal == 12:
+        #     self.przejazdyE += 1
+        #     if (self.przejazdyE)%2 == 0:
+        #         self.czasyStania[2] = t.time()
+        #         self.czasyStaniaPocz[2] = t.time() + 10
+        #         self.stacja[2] = 'E'
+        #         self.trains[2][0].setPos((self.czujniki[12].x*self.xsize+40), (self.czujniki[12].y*self.xsize+40))
+        # elif bal == 4:
+        #     self.osowaStopTimer = t.time()
+        #     self.osowaStopTimerPocz = t.time() + self.secondsForOsowaPeron
+        #     self.osowaTimerZalaczony = 1
+        # elif bal == 29:
+        #     self.przejazdyI += 1
+        #     self.strzyzaTimer = t.time()
+        #     self.strzyzaTimerPocz = t.time() + self.secondsForStrzyza
+        #     if (self.przejazdyI)%2 == 0:
+        #         self.strzyzaTimerZalaczony = 1
+        #         self.trains[0][0].setPos((self.czujniki[29].x*self.xsize+20), (self.czujniki[29].y*self.xsize+20))
+        #         self.trains[0][0].angle = math.pi/4
+        #     elif (self.przejazdyI)%2 == 1:
+        #         self.trains[1][0].setPos((self.czujniki[29].x*self.xsize+20), (self.czujniki[29].y*self.xsize+20))
+        #         self.trains[1][0].angle = math.pi/4
+        #         self.strzyzaTimerZalaczony = 2
 
     def mousePressEvent(self, event):
         """
