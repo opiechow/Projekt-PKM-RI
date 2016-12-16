@@ -71,6 +71,7 @@ class PKMwindow(QMainWindow):
         if self.controller.terminale:
             QObject.connect(self.controller.terminale, SIGNAL("balisa_int"), self.balisaInterrupt)
         pass
+        self.connect(self.rk.diag, SIGNAL("virt_balisa_int"), self.rk.diag.virtualBalisaAlertInterrupt)
 
     def biggerScreen(self):
         """
@@ -95,10 +96,11 @@ class PKMwindow(QMainWindow):
         :param dir: jeden ze stringów 'przod','tyl','stop', które określają kierunek ruchu pociągu.
         :return: None
         """
-        trainsChecks = []
-        if self.oneCheck.isChecked(): trainsChecks.append(1)
-        if self.twoCheck.isChecked(): trainsChecks.append(2)
-        if self.threeCheck.isChecked(): trainsChecks.append(3)
+        trainsChecks = [1, 2, 3, 6]
+        # if self.oneCheck.isChecked(): trainsChecks.append(1)
+        # if self.twoCheck.isChecked(): trainsChecks.append(2)
+        # if self.threeCheck.isChecked(): trainsChecks.append(3)
+        # trainsChecks.append(6)
         for trainNo in trainsChecks:
             try:
                 self.kom.set_speed(trainNo,dir)
@@ -125,7 +127,7 @@ class PKMwindow(QMainWindow):
         for trainNo in [1,2,3,6]:
             self.kom.set_speed(trainNo,"stop")
             try:
-                self.rk.trains[trainNo-1][0].zahamujSie()
+                self.rk.trains[self.rk.pociagi.index(trainNo)][0].zahamujSie()
             except:
                 pass
 
@@ -137,6 +139,7 @@ class PKMwindow(QMainWindow):
         trainNo = int(self.trainNoCombo.currentText())
         speed = str(self.speedInput.text())
         self.kom.set_sped(trainNo,speed)
+        self.rk.trains[self.rk.pociagi.index(trainNo)][0].ruszSie()
 
     def _on_resized(self,event):
         """
